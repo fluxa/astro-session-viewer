@@ -68,12 +68,17 @@ python main.py
 
 ## Screenshots
 
-The application displays:
-- Session summary with target, duration, integration time, and overall RMS
-- Guiding RMS timeline with event markers
-- HFR per sub chart
-- Detailed tables for exposures, autofocus runs, and guiding sessions
-- Chronological events list
+### Main Window - Guiding RMS Chart
+![Main Window](screenshots/main.png)
+*Session summary, guiding RMS timeline with dither markers (yellow), autofocus markers (purple), and meridian flip markers (orange). Exposures table shows per-sub guiding RMS.*
+
+### HFR Per Sub Chart
+![HFR Chart](screenshots/hfr.png)
+*HFR values for each sub, color-coded by filter.*
+
+### Session Loader
+![Session Loader](screenshots/load_session.png)
+*Scan NINA and PHD2 log folders to discover and load sessions by date.*
 
 ## Log File Locations
 
