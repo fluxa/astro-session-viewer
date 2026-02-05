@@ -443,16 +443,21 @@ class ExposuresTableWidget(QGroupBox):
 
     def __init__(self, parent=None):
         super().__init__("Exposures", parent)
+        self._imaging_pixel_scale = 1.0  # arcsec/px
         self._setup_ui()
+
+    def set_imaging_pixel_scale(self, scale: float) -> None:
+        """Set the imaging system pixel scale for RMS color coding."""
+        self._imaging_pixel_scale = scale
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(9)
+        self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
             "Time", "Filter", "Exp", "HFR", "Stars",
-            "RA RMS", "Dec RMS", "Total RMS", "Frames"
+            "RA RMS", "Dec RMS", "Total RMS", "Img Px", "Frames"
         ])
 
         header = self.table.horizontalHeader()
@@ -494,20 +499,35 @@ class ExposuresTableWidget(QGroupBox):
             ra_item = QTableWidgetItem(f"{exp.ra_rms:.2f}\"" if exp.ra_rms else "-")
             dec_item = QTableWidgetItem(f"{exp.dec_rms:.2f}\"" if exp.dec_rms else "-")
             total_item = QTableWidgetItem(f"{exp.total_rms:.2f}\"" if exp.total_rms else "-")
-            frames_item = QTableWidgetItem(str(exp.guiding_frames) if exp.guiding_frames else "-")
 
-            # Highlight poor guiding
-            if exp.total_rms and exp.total_rms > 1.0:
-                for item in [ra_item, dec_item, total_item]:
-                    item.setBackground(QBrush(QColor("#FFCDD2")))
-            elif exp.total_rms and exp.total_rms > 0.6:
-                for item in [ra_item, dec_item, total_item]:
-                    item.setBackground(QBrush(QColor("#FFF9C4")))
+            # Calculate error in imaging pixels
+            if exp.total_rms and self._imaging_pixel_scale > 0:
+                img_pixels = exp.total_rms / self._imaging_pixel_scale
+                img_px_item = QTableWidgetItem(f"{img_pixels:.2f} px")
+
+                # Color code based on imaging pixels:
+                # Green: < 1 px (sub-pixel, no visible error)
+                # Yellow: 1-2 px (marginal, may be visible)
+                # Red: > 2 px (definitely visible trailing)
+                if img_pixels < 1.0:
+                    bg_color = QColor("#C8E6C9")  # Light green
+                elif img_pixels < 2.0:
+                    bg_color = QColor("#FFF9C4")  # Light yellow
+                else:
+                    bg_color = QColor("#FFCDD2")  # Light red
+
+                for item in [ra_item, dec_item, total_item, img_px_item]:
+                    item.setBackground(QBrush(bg_color))
+            else:
+                img_px_item = QTableWidgetItem("-")
+
+            frames_item = QTableWidgetItem(str(exp.guiding_frames) if exp.guiding_frames else "-")
 
             self.table.setItem(row, 5, ra_item)
             self.table.setItem(row, 6, dec_item)
             self.table.setItem(row, 7, total_item)
-            self.table.setItem(row, 8, frames_item)
+            self.table.setItem(row, 8, img_px_item)
+            self.table.setItem(row, 9, frames_item)
 
 
 class EventsListWidget(QGroupBox):
@@ -863,3 +883,115 @@ class SessionSelectorDialog(QDialog):
         if phd2_folder:
             self._phd2_folder = phd2_folder
             self.phd2_folder_edit.setText(str(phd2_folder))
+
+
+class SettingsDialog(QDialog):
+    """Dialog for application settings."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(400)
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Imaging system settings
+        imaging_group = QGroupBox("Imaging System")
+        imaging_layout = QFormLayout(imaging_group)
+
+        # Pixel scale input
+        self.pixel_scale_spin = QDoubleSpinBox()
+        self.pixel_scale_spin.setRange(0.1, 10.0)
+        self.pixel_scale_spin.setSingleStep(0.01)
+        self.pixel_scale_spin.setDecimals(2)
+        self.pixel_scale_spin.setSuffix(" arcsec/px")
+        self.pixel_scale_spin.setToolTip(
+            "Pixel scale of your imaging system (main camera + telescope).\n"
+            "Used to calculate guiding error in imaging pixels.\n\n"
+            "Formula: Pixel Scale = 206.265 * pixel_size_um / focal_length_mm"
+        )
+        imaging_layout.addRow("Imaging Pixel Scale:", self.pixel_scale_spin)
+
+        # Helper calculator
+        calc_group = QGroupBox("Pixel Scale Calculator")
+        calc_layout = QFormLayout(calc_group)
+
+        self.pixel_size_spin = QDoubleSpinBox()
+        self.pixel_size_spin.setRange(0.1, 20.0)
+        self.pixel_size_spin.setSingleStep(0.1)
+        self.pixel_size_spin.setDecimals(2)
+        self.pixel_size_spin.setSuffix(" µm")
+        self.pixel_size_spin.setValue(3.76)  # Common value (ASI294, etc.)
+        self.pixel_size_spin.valueChanged.connect(self._calculate_pixel_scale)
+        calc_layout.addRow("Camera Pixel Size:", self.pixel_size_spin)
+
+        self.focal_length_spin = QSpinBox()
+        self.focal_length_spin.setRange(50, 5000)
+        self.focal_length_spin.setSingleStep(10)
+        self.focal_length_spin.setSuffix(" mm")
+        self.focal_length_spin.setValue(1000)
+        self.focal_length_spin.valueChanged.connect(self._calculate_pixel_scale)
+        calc_layout.addRow("Focal Length:", self.focal_length_spin)
+
+        self.calc_result_label = QLabel("")
+        self.calc_result_label.setStyleSheet("color: #666; font-style: italic;")
+        calc_layout.addRow("", self.calc_result_label)
+
+        apply_calc_btn = QPushButton("Apply Calculated Value")
+        apply_calc_btn.clicked.connect(self._apply_calculated)
+        calc_layout.addRow("", apply_calc_btn)
+
+        imaging_layout.addRow(calc_group)
+
+        # Info label about color coding
+        info_label = QLabel(
+            "<b>RMS Color Coding:</b><br>"
+            "🟢 Green: &lt; 1 imaging pixel (sub-pixel, excellent)<br>"
+            "🟡 Yellow: 1-2 imaging pixels (marginal)<br>"
+            "🔴 Red: &gt; 2 imaging pixels (visible trailing)"
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("background: #f5f5f5; padding: 8px; border-radius: 4px;")
+        imaging_layout.addRow(info_label)
+
+        layout.addWidget(imaging_group)
+
+        # Dialog buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+        # Initial calculation
+        self._calculate_pixel_scale()
+
+    def _calculate_pixel_scale(self):
+        """Calculate pixel scale from camera and telescope parameters."""
+        pixel_size = self.pixel_size_spin.value()
+        focal_length = self.focal_length_spin.value()
+        if focal_length > 0:
+            # Formula: pixel_scale = 206.265 * pixel_size_um / focal_length_mm
+            scale = 206.265 * pixel_size / focal_length
+            self.calc_result_label.setText(f"Calculated: {scale:.2f} arcsec/px")
+            self._calculated_scale = scale
+        else:
+            self.calc_result_label.setText("")
+            self._calculated_scale = None
+
+    def _apply_calculated(self):
+        """Apply the calculated pixel scale."""
+        if hasattr(self, '_calculated_scale') and self._calculated_scale:
+            self.pixel_scale_spin.setValue(self._calculated_scale)
+
+    def get_imaging_pixel_scale(self) -> float:
+        """Get the configured imaging pixel scale."""
+        return self.pixel_scale_spin.value()
+
+    def set_imaging_pixel_scale(self, value: float):
+        """Set the imaging pixel scale value."""
+        self.pixel_scale_spin.setValue(value)

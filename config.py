@@ -40,6 +40,7 @@ class Config:
             'exclude_dither': True,
             'granularity_minutes': 1,
             'window_geometry': None,
+            'imaging_pixel_scale': 1.0,  # arcsec/px for the imaging system
         }
         self.load()
 
@@ -130,6 +131,17 @@ class Config:
     def window_geometry(self, value: Optional[dict]) -> None:
         """Set the window geometry."""
         self._config['window_geometry'] = value
+        self.save()
+
+    @property
+    def imaging_pixel_scale(self) -> float:
+        """Get the imaging system pixel scale in arcsec/px."""
+        return self._config.get('imaging_pixel_scale', 1.0)
+
+    @imaging_pixel_scale.setter
+    def imaging_pixel_scale(self, value: float) -> None:
+        """Set the imaging system pixel scale in arcsec/px."""
+        self._config['imaging_pixel_scale'] = value
         self.save()
 
 

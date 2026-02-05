@@ -16,7 +16,7 @@ from parsers import PHD2Parser, NINAParser, match_session_logs, correlate_guidin
 from widgets import (
     SessionSummaryWidget, GuidingChartWidget, HFRChartWidget,
     AutofocusTableWidget, ExposuresTableWidget, EventsListWidget,
-    GuidingSessionsTableWidget, SessionSelectorDialog
+    GuidingSessionsTableWidget, SessionSelectorDialog, SettingsDialog
 )
 from config import get_config
 
@@ -209,6 +209,13 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        settings_action = QAction("&Settings...", self)
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.triggered.connect(self._show_settings)
+        file_menu.addAction(settings_action)
+
+        file_menu.addSeparator()
+
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
@@ -361,6 +368,8 @@ class MainWindow(QMainWindow):
 
         if self._nina_parser:
             self.hfr_chart.set_data(self._nina_parser)
+            # Apply imaging pixel scale for color coding
+            self.exposures_table.set_imaging_pixel_scale(self._config.imaging_pixel_scale)
             self.exposures_table.set_data(self._nina_parser)
             self.autofocus_table.set_data(self._nina_parser)
 
@@ -384,7 +393,8 @@ class MainWindow(QMainWindow):
                 dither_events=dither_events,
                 dither_margin_seconds=margin
             )
-            # Update exposures table
+            # Update exposures table with current imaging pixel scale
+            self.exposures_table.set_imaging_pixel_scale(self._config.imaging_pixel_scale)
             self.exposures_table.set_data(self._nina_parser)
 
         # Update summary with new settings
@@ -406,6 +416,24 @@ class MainWindow(QMainWindow):
             "<p>Displays guiding performance, autofocus runs, "
             "image quality metrics, and session events.</p>"
         )
+
+    def _show_settings(self):
+        """Show settings dialog."""
+        dialog = SettingsDialog(self)
+        dialog.set_imaging_pixel_scale(self._config.imaging_pixel_scale)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Save new settings
+            self._config.imaging_pixel_scale = dialog.get_imaging_pixel_scale()
+
+            # Refresh exposures table with new pixel scale
+            if self._nina_parser:
+                self.exposures_table.set_imaging_pixel_scale(self._config.imaging_pixel_scale)
+                self.exposures_table.set_data(self._nina_parser)
+
+            self.statusbar.showMessage(
+                f"Settings saved (Imaging: {self._config.imaging_pixel_scale:.2f} arcsec/px)"
+            )
 
     def _restore_window_geometry(self):
         """Restore window geometry from config."""
