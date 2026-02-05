@@ -210,9 +210,29 @@ class GuidingChartWidget(QWidget):
         """Get the current dither margin in seconds."""
         return self.dither_margin_spin.value()
 
+    def set_dither_margin(self, value: float) -> None:
+        """Set the dither margin in seconds."""
+        self.dither_margin_spin.blockSignals(True)
+        self.dither_margin_spin.setValue(value)
+        self.dither_margin_spin.blockSignals(False)
+
     def is_dither_excluded(self) -> bool:
         """Check if dither exclusion is enabled."""
         return self.exclude_dither_cb.isChecked()
+
+    def set_dither_excluded(self, value: bool) -> None:
+        """Set whether dither exclusion is enabled."""
+        self.exclude_dither_cb.blockSignals(True)
+        self.exclude_dither_cb.setChecked(value)
+        self.exclude_dither_cb.blockSignals(False)
+
+    def set_granularity(self, minutes: int) -> None:
+        """Set the granularity in minutes."""
+        mapping = {1: 0, 5: 1, 10: 2, 30: 3}
+        index = mapping.get(minutes, 1)
+        self.granularity_combo.blockSignals(True)
+        self.granularity_combo.setCurrentIndex(index)
+        self.granularity_combo.blockSignals(False)
 
     def _on_settings_changed(self):
         """Handle any settings change."""

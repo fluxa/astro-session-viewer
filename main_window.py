@@ -18,6 +18,7 @@ from widgets import (
     AutofocusTableWidget, ExposuresTableWidget, EventsListWidget,
     GuidingSessionsTableWidget, SessionSelectorDialog
 )
+from config import get_config
 
 
 class MainWindow(QMainWindow):
@@ -33,13 +34,18 @@ class MainWindow(QMainWindow):
         self._phd2_path: Optional[Path] = None
         self._nina_path: Optional[Path] = None
 
-        # Remember folder paths for session finder
-        self._nina_folder: Optional[Path] = None
-        self._phd2_folder: Optional[Path] = None
+        # Load config
+        self._config = get_config()
+
+        # Load folder paths from config
+        self._nina_folder: Optional[Path] = self._config.nina_folder
+        self._phd2_folder: Optional[Path] = self._config.phd2_folder
 
         self._setup_ui()
         self._setup_menubar()
         self._setup_statusbar()
+        self._restore_window_geometry()
+        self._apply_saved_settings()
 
     def _setup_ui(self):
         """Set up the main UI layout."""
@@ -84,6 +90,7 @@ class MainWindow(QMainWindow):
         guiding_layout.setContentsMargins(4, 4, 4, 4)
         self.guiding_chart = GuidingChartWidget()
         self.guiding_chart.ditherSettingsChanged.connect(self._on_dither_settings_changed)
+        self.guiding_chart.granularity_combo.currentIndexChanged.connect(self._on_granularity_changed)
         guiding_layout.addWidget(self.guiding_chart)
         charts_tabs.addTab(guiding_tab, "Guiding RMS")
 
@@ -234,13 +241,15 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             nina_path, phd2_path = dialog.get_selected_logs()
 
-            # Remember the folders for next time
+            # Remember the folders for next time and save to config
             if nina_path:
                 self._nina_folder = nina_path.parent
+                self._config.nina_folder = self._nina_folder
                 self._nina_path = nina_path
                 self.nina_label.setText(nina_path.name)
             if phd2_path:
                 self._phd2_folder = phd2_path.parent
+                self._config.phd2_folder = self._phd2_folder
                 self._phd2_path = phd2_path
                 self.phd2_label.setText(phd2_path.name)
 
@@ -260,6 +269,7 @@ class MainWindow(QMainWindow):
         if filepath:
             self._phd2_path = Path(filepath)
             self._phd2_folder = self._phd2_path.parent
+            self._config.phd2_folder = self._phd2_folder
             self.phd2_label.setText(self._phd2_path.name)
             self._update_load_button()
 
@@ -275,6 +285,7 @@ class MainWindow(QMainWindow):
         if filepath:
             self._nina_path = Path(filepath)
             self._nina_folder = self._nina_path.parent
+            self._config.nina_folder = self._nina_folder
             self.nina_label.setText(self._nina_path.name)
             self._update_load_button()
 
@@ -353,8 +364,18 @@ class MainWindow(QMainWindow):
             self.exposures_table.set_data(self._nina_parser)
             self.autofocus_table.set_data(self._nina_parser)
 
+    def _on_granularity_changed(self, index: int):
+        """Handle granularity change from chart widget."""
+        mapping = {0: 1, 1: 5, 2: 10, 3: 30}
+        minutes = mapping.get(index, 5)
+        self._config.granularity_minutes = minutes
+
     def _on_dither_settings_changed(self, margin: float, exclude: bool):
         """Handle dither settings change from chart widget."""
+        # Save settings to config
+        self._config.dither_margin = margin
+        self._config.exclude_dither = exclude
+
         if self._phd2_parser and self._nina_parser:
             # Recorrelate guiding data with new dither settings
             dither_events = self._nina_parser.dither_events if exclude else None
@@ -385,3 +406,41 @@ class MainWindow(QMainWindow):
             "<p>Displays guiding performance, autofocus runs, "
             "image quality metrics, and session events.</p>"
         )
+
+    def _restore_window_geometry(self):
+        """Restore window geometry from config."""
+        geometry = self._config.window_geometry
+        if geometry:
+            try:
+                self.setGeometry(
+                    geometry.get('x', 100),
+                    geometry.get('y', 100),
+                    geometry.get('width', 1200),
+                    geometry.get('height', 800)
+                )
+            except (KeyError, TypeError):
+                pass  # Use default geometry
+
+    def _apply_saved_settings(self):
+        """Apply saved settings to widgets."""
+        # Apply dither settings
+        self.guiding_chart.set_dither_margin(self._config.dither_margin)
+        self.guiding_chart.set_dither_excluded(self._config.exclude_dither)
+
+        # Apply granularity
+        self.guiding_chart.set_granularity(self._config.granularity_minutes)
+
+    def _save_window_geometry(self):
+        """Save window geometry to config."""
+        geo = self.geometry()
+        self._config.window_geometry = {
+            'x': geo.x(),
+            'y': geo.y(),
+            'width': geo.width(),
+            'height': geo.height()
+        }
+
+    def closeEvent(self, event):
+        """Handle window close event."""
+        self._save_window_geometry()
+        super().closeEvent(event)
