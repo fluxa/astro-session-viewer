@@ -47,20 +47,27 @@ class GuidingSession:
 
     @property
     def ra_rms(self) -> float:
+        """RA RMS in arcseconds."""
         if not self.frames:
             return 0.0
         ra_values = [f.ra_raw for f in self.frames]
-        return float(np.sqrt(np.mean(np.square(ra_values))))
+        # Raw values are in pixels, multiply by pixel_scale to get arcseconds
+        rms_px = float(np.sqrt(np.mean(np.square(ra_values))))
+        return rms_px * self.pixel_scale if self.pixel_scale else rms_px
 
     @property
     def dec_rms(self) -> float:
+        """Dec RMS in arcseconds."""
         if not self.frames:
             return 0.0
         dec_values = [f.dec_raw for f in self.frames]
-        return float(np.sqrt(np.mean(np.square(dec_values))))
+        # Raw values are in pixels, multiply by pixel_scale to get arcseconds
+        rms_px = float(np.sqrt(np.mean(np.square(dec_values))))
+        return rms_px * self.pixel_scale if self.pixel_scale else rms_px
 
     @property
     def total_rms(self) -> float:
+        """Total RMS in arcseconds."""
         if not self.frames:
             return 0.0
         return float(np.sqrt(self.ra_rms**2 + self.dec_rms**2))
@@ -257,7 +264,7 @@ class PHD2Parser:
             dither_events: List of DitherEvent objects to exclude from calculations.
             dither_margin_seconds: Additional margin before/after dither to exclude.
 
-        Returns list of (timestamp, ra_rms, dec_rms, total_rms).
+        Returns list of (timestamp, ra_rms, dec_rms, total_rms) in arcseconds.
         """
         results = []
 
@@ -265,6 +272,7 @@ class PHD2Parser:
             if not session.frames:
                 continue
 
+            pixel_scale = session.pixel_scale or 1.0
             current_bucket: list[GuidingFrame] = []
             bucket_start = session.start_time
 
@@ -280,8 +288,9 @@ class PHD2Parser:
                     if current_bucket:
                         ra_vals = [f.ra_raw for f in current_bucket]
                         dec_vals = [f.dec_raw for f in current_bucket]
-                        ra_rms = float(np.sqrt(np.mean(np.square(ra_vals))))
-                        dec_rms = float(np.sqrt(np.mean(np.square(dec_vals))))
+                        # Convert from pixels to arcseconds
+                        ra_rms = float(np.sqrt(np.mean(np.square(ra_vals)))) * pixel_scale
+                        dec_rms = float(np.sqrt(np.mean(np.square(dec_vals)))) * pixel_scale
                         total_rms = float(np.sqrt(ra_rms**2 + dec_rms**2))
                         results.append((bucket_start, ra_rms, dec_rms, total_rms))
 
@@ -294,8 +303,9 @@ class PHD2Parser:
             if current_bucket:
                 ra_vals = [f.ra_raw for f in current_bucket]
                 dec_vals = [f.dec_raw for f in current_bucket]
-                ra_rms = float(np.sqrt(np.mean(np.square(ra_vals))))
-                dec_rms = float(np.sqrt(np.mean(np.square(dec_vals))))
+                # Convert from pixels to arcseconds
+                ra_rms = float(np.sqrt(np.mean(np.square(ra_vals)))) * pixel_scale
+                dec_rms = float(np.sqrt(np.mean(np.square(dec_vals)))) * pixel_scale
                 total_rms = float(np.sqrt(ra_rms**2 + dec_rms**2))
                 results.append((bucket_start, ra_rms, dec_rms, total_rms))
 
@@ -325,12 +335,17 @@ class PHD2Parser:
     ) -> tuple[float, float, float]:
         """Calculate overall RMS across all sessions, excluding dither periods.
 
-        Returns (ra_rms, dec_rms, total_rms).
+        Returns (ra_rms, dec_rms, total_rms) in arcseconds.
         """
         all_ra = []
         all_dec = []
+        pixel_scale = 1.0
 
         for session in self.sessions:
+            # Use the pixel scale from the first session that has one
+            if session.pixel_scale:
+                pixel_scale = session.pixel_scale
+
             for frame in session.frames:
                 frame_time = session.start_time.timestamp() + frame.time
                 frame_dt = datetime.fromtimestamp(frame_time)
@@ -345,8 +360,9 @@ class PHD2Parser:
         if not all_ra:
             return (0.0, 0.0, 0.0)
 
-        ra_rms = float(np.sqrt(np.mean(np.square(all_ra))))
-        dec_rms = float(np.sqrt(np.mean(np.square(all_dec))))
+        # Convert from pixels to arcseconds
+        ra_rms = float(np.sqrt(np.mean(np.square(all_ra)))) * pixel_scale
+        dec_rms = float(np.sqrt(np.mean(np.square(all_dec)))) * pixel_scale
         total_rms = float(np.sqrt(ra_rms**2 + dec_rms**2))
 
         return (ra_rms, dec_rms, total_rms)
@@ -659,8 +675,8 @@ def correlate_guiding_with_exposures(
 ) -> None:
     """Correlate PHD2 guiding data with NINA exposures.
 
-    Calculates and populates RMS values for each exposure based on
-    guiding frames that occurred during that exposure.
+    Calculates and populates RMS values (in arcseconds) for each exposure
+    based on guiding frames that occurred during that exposure.
 
     Args:
         phd2: Parsed PHD2 data
@@ -669,6 +685,13 @@ def correlate_guiding_with_exposures(
         dither_margin_seconds: Margin around dither events to exclude
     """
     from datetime import timedelta
+
+    # Get pixel scale from PHD2 sessions (use first session that has one)
+    pixel_scale = 1.0
+    for session in phd2.sessions:
+        if session.pixel_scale:
+            pixel_scale = session.pixel_scale
+            break
 
     for exposure in nina.exposures:
         # Calculate exposure time window
@@ -703,9 +726,11 @@ def correlate_guiding_with_exposures(
                     ra_values.append(frame.ra_raw)
                     dec_values.append(frame.dec_raw)
 
-        # Calculate RMS for this exposure
+        # Calculate RMS for this exposure (in arcseconds)
         if ra_values:
-            exposure.ra_rms = float(np.sqrt(np.mean(np.square(ra_values))))
-            exposure.dec_rms = float(np.sqrt(np.mean(np.square(dec_values))))
+            ra_rms_px = float(np.sqrt(np.mean(np.square(ra_values))))
+            dec_rms_px = float(np.sqrt(np.mean(np.square(dec_values))))
+            exposure.ra_rms = ra_rms_px * pixel_scale
+            exposure.dec_rms = dec_rms_px * pixel_scale
             exposure.total_rms = float(np.sqrt(exposure.ra_rms**2 + exposure.dec_rms**2))
             exposure.guiding_frames = len(ra_values)
